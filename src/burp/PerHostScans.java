@@ -248,7 +248,9 @@ public class PerHostScans extends Scan {
     }
 
     static String htmlEncode(String input) {
-        // Implement HTML encoding as needed
-        return input;
+        return input.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
     }
 }

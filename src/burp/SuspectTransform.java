@@ -3,6 +3,7 @@ package burp;
 import java.util.*;
 import java.util.Random;
 
+import static burp.PerHostScans.htmlEncode;
 import static burp.PerHostScans.safeBytesToString;
 import static burp.Utilities.helpers;
 
@@ -189,8 +190,8 @@ public class SuspectTransform extends ParamScan {
                                     new IHttpRequestResponse[]{attack},
                                     "Suspicious input transformation: " + name,
                                     "The application transforms input in a manner that indicates potential vulnerability (e.g., code injection, validation bypass, etc.):<br/><br/> "
-                                            + "The following probe was sent: <b>" + describe(probe) + "</b><br/>"
-                                            + "The server response contained the evaluated result: <b>" + e + "</b><br/><br/>Manual investigation is advised."
+                                            + "The following probe was sent: <b>" + htmlEncode(describe(probe)) + "</b><br/>"
+                                            + "The server response contained the evaluated result: <b>" + htmlEncode(e) + "</b><br/><br/>Manual investigation is advised."
                                             + (links.isEmpty() ? "" : "<br/> More details: " + String.join(", ", links)),
                                     "Tentative", CustomScanIssue.severity.High));
                         }
@@ -223,11 +224,12 @@ public class SuspectTransform extends ParamScan {
 
     // Probes may contain bytes that aren't printable (or aren't valid UTF-8), so render
     // anything outside printable ASCII as a hex escape rather than dropping it into the report.
+    // HTML-significant characters are left alone here; htmlEncode handles them at the call site.
     private static String describe(byte[] probe) {
         StringBuilder out = new StringBuilder();
         for (byte b : probe) {
             int c = b & 0xFF;
-            if (c >= 0x20 && c <= 0x7E && c != '<' && c != '>' && c != '&') {
+            if (c >= 0x20 && c <= 0x7E) {
                 out.append((char) c);
             } else {
                 out.append(String.format("\\x%02x", c));
