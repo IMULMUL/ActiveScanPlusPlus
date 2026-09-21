@@ -1,6 +1,4 @@
 package burp;
-import org.apache.commons.lang3.tuple.ImmutablePair;
-import org.apache.commons.lang3.tuple.Pair;
 
 import java.util.*;
 import java.util.Random;
@@ -9,6 +7,11 @@ import static burp.PerHostScans.safeBytesToString;
 import static burp.Utilities.helpers;
 
 public class SuspectTransform extends ParamScan {
+    // U+DC2A as a lone surrogate, in the naive 3-byte UTF-8 form (WTF-8). This cannot be
+    // expressed as a Java String: no unpaired surrogate has a valid UTF-8 encoding, so
+    // String.getBytes() would silently replace it with '?' before the request is sent.
+    private static final byte[] LONE_SURROGATE = {(byte) 0xED, (byte) 0xB0, (byte) 0xAA};
+
     private Map<String, CheckDetails> checks;
     private int confirmCount;
 
@@ -43,117 +46,109 @@ public class SuspectTransform extends ParamScan {
                 List.of("https://portswigger.net/research/cookie-chaos-how-to-bypass-host-and-secure-cookie-prefixes")));
         this.confirmCount = 2;
     }
-    
-    private Pair<String, List<String>> detectUnicodeSpaceConvert(String base) {
+
+    private Probe detectUnicodeSpaceConvert(String base) {
         String leftAnchor = Utilities.randomString(6);
         String rightAnchor = Utilities.randomString(6);
-    
+
         // Probe sends the EN QUAD character (\u2000) between the anchors
         String probe = leftAnchor + "\u2000" + rightAnchor;
-    
-        // We check for two possibilities: 
+
+        // We check for two possibilities:
         // 1. The character is converted to a standard space (" ")
         // 2. The character is completely stripped/trimmed out ("")
-        List<String> expected = List.of(
-            leftAnchor + " " + rightAnchor,
-            leftAnchor + rightAnchor
-        );
-    
-        return new ImmutablePair<>(probe, expected);
+        return Probe.of(probe, leftAnchor + " " + rightAnchor, leftAnchor + rightAnchor);
     }
-    
-    private Pair<String, List<String>> detectUnicodeBitwiseOverflow(String base) {
+
+    private Probe detectUnicodeBitwiseOverflow(String base) {
         String leftAnchor = Utilities.randomString(6);
         String rightAnchor = Utilities.randomString(6);
-    
+
         // 0x8336 (茶) masks down to 0x36 ('6') when evaluated with an '& 255' bitwise overflow
         String probe = leftAnchor + "\u8336" + rightAnchor;
-    
+
         // Expect the backend parser to evaluate the bitwise operation and output a literal '6'
-        List<String> expected = Collections.singletonList(leftAnchor + "6" + rightAnchor);
-    
-        return new ImmutablePair<>(probe, expected);
+        return Probe.of(probe, leftAnchor + "6" + rightAnchor);
     }
-    
-    private Pair<String, List<String>> detectSurrogateReplacement(String base) {
+
+    private Probe detectSurrogateReplacement(String base) {
         String leftAnchor = Utilities.randomString(6);
         String rightAnchor = Utilities.randomString(6);
-        return new ImmutablePair<>(leftAnchor+"\udc2a"+rightAnchor, Collections.singletonList(leftAnchor+"?"+rightAnchor));
+
+        // The lone surrogate has to go on the wire as raw bytes - see LONE_SURROGATE. Burp
+        // applies whatever encoding the insertion point needs (eg %ED%B0%AA for a URL param).
+        byte[] probe = concat(leftAnchor.getBytes(), LONE_SURROGATE, rightAnchor.getBytes());
+
+        // Some parsers simplify the U+FFFD replacement character all the way down to '?'
+        return Probe.ofBytes(probe, leftAnchor + "?" + rightAnchor);
     }
-    
-    private Pair<String, List<String>> detectLegacyUrlDecode(String base) {
+
+    private Probe detectLegacyUrlDecode(String base) {
         String leftAnchor = Utilities.randomString(6);
         String rightAnchor = Utilities.randomString(6);
-    
+
         // The probe sends the literal string "%ff" between the anchors
-        String probe = leftAnchor + "%ff" + rightAnchor; 
-    
+        String probe = leftAnchor + "%ff" + rightAnchor;
+
         // The expected response checks for the decoded 'ÿ' (\u00FF) character between the anchors
-        List<String> expected = Collections.singletonList(leftAnchor + "\u00FF" + rightAnchor);
-    
-        return new ImmutablePair<>(probe, expected);
+        return Probe.of(probe, leftAnchor + "\u00FF" + rightAnchor);
     }
-    
-    private Pair<String, List<String>> detectUnicodeNormalisation(String base) {
+
+    private Probe detectUnicodeNormalisation(String base) {
         String leftAnchor = Utilities.randomString(6);
         String rightAnchor = Utilities.randomString(6);
-        return new ImmutablePair<>(leftAnchor+"\u212a"+rightAnchor, Collections.singletonList(leftAnchor+"K"+rightAnchor));
+        return Probe.of(leftAnchor + "\u212a" + rightAnchor, leftAnchor + "K" + rightAnchor);
     }
 
-    private Pair<String, List<String>> detectUrlDecodeError(String base) {
+    private Probe detectUrlDecodeError(String base) {
         String leftAnchor = Utilities.randomString(6);
         String rightAnchor = Utilities.randomString(6);
-        return new ImmutablePair<>(leftAnchor+"\u0391"+rightAnchor, Collections.singletonList(leftAnchor+"N\u0011"+rightAnchor));
+        return Probe.of(leftAnchor + "\u0391" + rightAnchor, leftAnchor + "N\u0011" + rightAnchor);
     }
 
-    private Pair<String, List<String>> detectUnicodeByteTruncation(String base) {
+    private Probe detectUnicodeByteTruncation(String base) {
         String leftAnchor = Utilities.randomString(6);
         String rightAnchor = Utilities.randomString(6);
-        return new ImmutablePair<>(leftAnchor+"\uCF7B"+rightAnchor, Collections.singletonList(leftAnchor+"{"+rightAnchor));
+        return Probe.of(leftAnchor + "\uCF7B" + rightAnchor, leftAnchor + "{" + rightAnchor);
     }
 
-    private Pair<String, List<String>> detectUnicodeCaseConversion(String base) {
+    private Probe detectUnicodeCaseConversion(String base) {
         String leftAnchor = Utilities.randomString(6);
         String rightAnchor = Utilities.randomString(6);
-        return new ImmutablePair<>(leftAnchor+"\u0131"+rightAnchor, Collections.singletonList(leftAnchor+"I"+rightAnchor));
+        return Probe.of(leftAnchor + "\u0131" + rightAnchor, leftAnchor + "I" + rightAnchor);
     }
 
-    private Pair<String, List<String>> detectUnicodeCombiningDiacritic(String base) {
+    private Probe detectUnicodeCombiningDiacritic(String base) {
         String rightAnchor = Utilities.randomString(6);
-        return new ImmutablePair<>("\u0338"+rightAnchor, Collections.singletonList("\u226F"+rightAnchor));
+        return Probe.of("\u0338" + rightAnchor, "\u226F" + rightAnchor);
     }
 
-    private Pair<String, List<String>> detectQuoteConsumption(String base) {
+    private Probe detectQuoteConsumption(String base) {
         String leftAnchor = Utilities.randomString(6);
         String rightAnchor = Utilities.randomString(6);
-        return new ImmutablePair<>(leftAnchor+"''"+rightAnchor, Collections.singletonList(leftAnchor+"'"+rightAnchor));
+        return Probe.of(leftAnchor + "''" + rightAnchor, leftAnchor + "'" + rightAnchor);
     }
 
-    private Pair<String, List<String>> detectArithmetic(String base) {
+    private Probe detectArithmetic(String base) {
         Random random = new Random();
         int x = 99 + random.nextInt(9901);
         int y = 99 + random.nextInt(9901);
-        String probe = x + "*" + y;
-        String expect = String.valueOf(x * y);
-        return new ImmutablePair<>(probe, Collections.singletonList(expect));
+        return Probe.of(x + "*" + y, String.valueOf(x * y));
     }
 
-    private Pair<String, List<String>> detectExpression(String base) {
-        Pair<String, List<String>> arithmeticResult = detectArithmetic(base);
-        String probe = "${" + arithmeticResult.getKey() + "}";
-        return new ImmutablePair<>(probe, arithmeticResult.getValue());
+    private Probe detectExpression(String base) {
+        Probe arithmetic = detectArithmetic(base);
+        return arithmetic.wrap("${", "}");
     }
 
-    private Pair<String, List<String>> detectAltExpression(String base) {
-        Pair<String, List<String>> arithmeticResult = detectArithmetic(base);
-        String probe = "%{" + arithmeticResult.getKey() + "}";
-        return new ImmutablePair<>(probe, arithmeticResult.getValue());
+    private Probe detectAltExpression(String base) {
+        Probe arithmetic = detectArithmetic(base);
+        return arithmetic.wrap("%{", "}");
     }
 
-    private Pair<String, List<String>> detectRazorExpression(String base) {
-        Pair<String, List<String>> arithmeticResult = detectArithmetic(base);
-        String probe = "@(" + arithmeticResult.getKey() + ")";
-        return new ImmutablePair<>(probe, arithmeticResult.getValue());
+    private Probe detectRazorExpression(String base) {
+        Probe arithmetic = detectArithmetic(base);
+        return arithmetic.wrap("@(", ")");
     }
 
     @Override
@@ -171,17 +166,21 @@ public class SuspectTransform extends ParamScan {
             List<String> links = entry.getValue().getLinks();
 
             for (int attempt = 0; attempt < confirmCount; attempt++) {
-                Pair<String, List<String>> result = check.apply(base);
-                String probe = result.getKey();
-                List<String> expect = result.getValue();
+                Probe result = check.apply(base);
+                byte[] probe = result.payload();
+                List<String> expect = result.expected();
 
-                Utilities.log("Trying " + probe);
+                // Decoded the same way we decode responses. If the probe already reads as the
+                // transformed value then any 'match' is our own encoding, not the server's.
+                String wireProbe = safeBytesToString(probe);
+
+                Utilities.log("Trying " + wireProbe);
                 IHttpRequestResponse attack = OldUtilities.request2(basePair, insertionPoint, probe);
                 String attackResponse = safeBytesToString(attack.getResponse());
 
                 boolean matched = false;
                 for (String e : expect) {
-                    if (attackResponse.contains(e) && !initialResponse.contains(e)) {
+                    if (attackResponse.contains(e) && !initialResponse.contains(e) && !wireProbe.contains(e)) {
                         matched = true;
                         if (attempt == confirmCount - 1) {
                             issues.add(new CustomScanIssue(
@@ -190,7 +189,7 @@ public class SuspectTransform extends ParamScan {
                                     new IHttpRequestResponse[]{attack},
                                     "Suspicious input transformation: " + name,
                                     "The application transforms input in a manner that indicates potential vulnerability (e.g., code injection, validation bypass, etc.):<br/><br/> "
-                                            + "The following probe was sent: <b>" + probe + "</b><br/>"
+                                            + "The following probe was sent: <b>" + describe(probe) + "</b><br/>"
                                             + "The server response contained the evaluated result: <b>" + e + "</b><br/><br/>Manual investigation is advised."
                                             + (links.isEmpty() ? "" : "<br/> More details: " + String.join(", ", links)),
                                     "Tentative", CustomScanIssue.severity.High));
@@ -206,6 +205,51 @@ public class SuspectTransform extends ParamScan {
         }
 
         return issues;
+    }
+
+    private static byte[] concat(byte[]... parts) {
+        int length = 0;
+        for (byte[] part : parts) {
+            length += part.length;
+        }
+        byte[] result = new byte[length];
+        int offset = 0;
+        for (byte[] part : parts) {
+            System.arraycopy(part, 0, result, offset, part.length);
+            offset += part.length;
+        }
+        return result;
+    }
+
+    // Probes may contain bytes that aren't printable (or aren't valid UTF-8), so render
+    // anything outside printable ASCII as a hex escape rather than dropping it into the report.
+    private static String describe(byte[] probe) {
+        StringBuilder out = new StringBuilder();
+        for (byte b : probe) {
+            int c = b & 0xFF;
+            if (c >= 0x20 && c <= 0x7E && c != '<' && c != '>' && c != '&') {
+                out.append((char) c);
+            } else {
+                out.append(String.format("\\x%02x", c));
+            }
+        }
+        return out.toString();
+    }
+
+    private record Probe(byte[] payload, List<String> expected) {
+        static Probe of(String payload, String... expected) {
+            return new Probe(payload.getBytes(), List.of(expected));
+        }
+
+        static Probe ofBytes(byte[] payload, String... expected) {
+            return new Probe(payload, List.of(expected));
+        }
+
+        // Surround the payload, keeping the expected results untouched - used by the template
+        // engine checks, which look for the result of an arithmetic probe they've wrapped.
+        Probe wrap(String prefix, String suffix) {
+            return new Probe(concat(prefix.getBytes(), payload, suffix.getBytes()), expected);
+        }
     }
 
     private static class CheckDetails {
@@ -229,7 +273,7 @@ public class SuspectTransform extends ParamScan {
 
     @FunctionalInterface
     private interface Check {
-        Pair<String, List<String>> apply(String base);
+        Probe apply(String base);
     }
 
     // Other utility methods like safeBytesToString, request, debugMsg, etc. should be implemented as needed.

@@ -10,7 +10,13 @@ import java.util.regex.Pattern;
 
 public class OldUtilities {
     public static IHttpRequestResponse request2(IHttpRequestResponse basePair, IScannerInsertionPoint insertionPoint, String attack) {
-        return Utilities.callbacks.makeHttpRequest(basePair.getHttpService(), insertionPoint.buildRequest(attack.getBytes()));
+        return request2(basePair, insertionPoint, attack.getBytes());
+    }
+
+    // Byte-level variant, for probes that can't survive a round trip through String - eg a lone
+    // surrogate, which has no valid UTF-8 encoding and would be replaced with '?' by getBytes().
+    public static IHttpRequestResponse request2(IHttpRequestResponse basePair, IScannerInsertionPoint insertionPoint, byte[] attack) {
+        return Utilities.callbacks.makeHttpRequest(basePair.getHttpService(), insertionPoint.buildRequest(attack));
     }
 
     // Placeholder methods for helpers and callbacks, assumed to be provided elsewhere
